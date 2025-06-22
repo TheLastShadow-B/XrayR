@@ -136,6 +136,7 @@ func (c *APIClient) parseShadowsocksConfig(config *Shadowsocks) (*api.NodeInfo, 
 		NodeID:            c.ServerID,
 		Port:              uint32(config.Port),
 		CypherMethod:      config.Method,
+		ServerKey:         config.ServerKey,
 	}, nil
 }
 
