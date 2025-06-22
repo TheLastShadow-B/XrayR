@@ -20,6 +20,7 @@ import (
 	"github.com/XrayR-project/XrayR/api/newV2board"
 	"github.com/XrayR-project/XrayR/api/pmpanel"
 	"github.com/XrayR-project/XrayR/api/proxypanel"
+	"github.com/XrayR-project/XrayR/api/spanel"
 	"github.com/XrayR-project/XrayR/api/sspanel"
 	"github.com/XrayR-project/XrayR/api/v2raysocks"
 	"github.com/XrayR-project/XrayR/app/mydispatcher"
@@ -188,6 +189,8 @@ func (p *Panel) Start() {
 			apiClient = gov2panel.New(nodeConfig.ApiConfig)
 		case "BunPanel":
 			apiClient = bunpanel.New(nodeConfig.ApiConfig)
+		case "SPanel":
+			apiClient = spanel.New(nodeConfig.ApiConfig)
 		default:
 			log.Panicf("Unsupport panel type: %s", nodeConfig.PanelType)
 		}
@@ -208,7 +211,7 @@ func (p *Panel) Start() {
 	for _, s := range p.Service {
 		err := s.Start()
 		if err != nil {
-			log.Panicf("Panel Start failed: %s", err)
+			log.Panicf("Panel Start failed: %s", err.Error())
 		}
 	}
 	p.Running = true
