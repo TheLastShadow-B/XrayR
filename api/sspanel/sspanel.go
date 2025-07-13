@@ -836,25 +836,39 @@ func (c *APIClient) ParseSSPanelNodeInfo(nodeInfoResponse *NodeInfoResponse) (*a
 
 // compareVersion, version1 > version2 return 1, version1 < version2 return -1, 0 means equal
 func compareVersion(version1, version2 string) int {
-	n, m := len(version1), len(version2)
-	i, j := 0, 0
-	for i < n || j < m {
-		x := 0
-		for ; i < n && version1[i] != '.'; i++ {
-			x = x*10 + int(version1[i]-'0')
-		}
-		i++ // jump dot
-		y := 0
-		for ; j < m && version2[j] != '.'; j++ {
-			y = y*10 + int(version2[j]-'0')
-		}
-		j++ // jump dot
-		if x > y {
-			return 1
-		}
-		if x < y {
-			return -1
-		}
-	}
-	return 0
+    // 快速检测版本格式：旧格式以4位年份开头(2020+)，新格式以较小数字开头
+    isOldFormat1 := len(version1) >= 4 && version1[0:4] >= "2020" && version1[0:4] <= "2030"
+    isOldFormat2 := len(version2) >= 4 && version2[0:4] >= "2020" && version2[0:4] <= "2030"
+    
+    // 不同格式比较：新格式 > 旧格式
+    if isOldFormat1 && !isOldFormat2 {
+        return -1
+    }
+    if !isOldFormat1 && isOldFormat2 {
+        return 1
+    }
+    
+    // 相同格式，使用原有逻辑
+    n, m := len(version1), len(version2)
+    i, j := 0, 0
+    for i < n || j < m {
+        x := 0
+        for ; i < n && version1[i] != '.'; i++ {
+            x = x*10 + int(version1[i]-'0')
+        }
+        i++ // jump dot
+        y := 0
+        for ; j < m && version2[j] != '.'; j++ {
+            y = y*10 + int(version2[j]-'0')
+        }
+        j++ // jump dot
+        if x > y {
+            return 1
+        }
+        if x < y {
+            return -1
+        }
+    }
+    return 0
 }
+
