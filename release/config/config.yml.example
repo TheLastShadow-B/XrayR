@@ -47,6 +47,12 @@ Nodes:
         RedisDB: 0 # Redis DB
         Timeout: 5 # Timeout for redis request
         Expiry: 60 # Expiry time (second)
+        EnableTLS: false # Enable TLS connection to Redis
+        TLSSkipVerify: false # Skip TLS certificate verification (insecure, use only for testing)
+        TLSCertFile: # Path to client certificate file (optional)
+        TLSKeyFile: # Path to client key file (optional)
+        TLSCAFile: # Path to CA certificate file (optional)
+        TLSServerName: # Server name for TLS verification (optional)
       EnableFallback: false # Only support for Trojan and Vless
       FallBackConfigs:  # Support multiple fallbacks
         - SNI: # TLS SNI(Server Name Indication), Empty for any
@@ -106,11 +112,19 @@ Nodes:
 #        LimitDuration: 0 # How many minutes will the limiting last (unit: minute)
 #      GlobalDeviceLimitConfig:
 #        Enable: false # Enable the global device limit of a user
-#        RedisAddr: 127.0.0.1:6379 # The redis server address
+#        RedisNetwork: tcp # Redis protocol, tcp or unix
+#        RedisAddr: 127.0.0.1:6379 # Redis server address, or unix socket path
+#        RedisUsername: # Redis username
 #        RedisPassword: YOUR PASSWORD # Redis password
 #        RedisDB: 0 # Redis DB
 #        Timeout: 5 # Timeout for redis request
 #        Expiry: 60 # Expiry time (second)
+#        EnableTLS: false # Enable TLS connection to Redis
+#        TLSSkipVerify: false # Skip TLS certificate verification (insecure, use only for testing)
+#        TLSCertFile: # Path to client certificate file (optional)
+#        TLSKeyFile: # Path to client key file (optional)
+#        TLSCAFile: # Path to CA certificate file (optional)
+#        TLSServerName: # Server name for TLS verification (optional)
 #      EnableFallback: false # Only support for Trojan and Vless
 #      FallBackConfigs:  # Support multiple fallbacks
 #        - SNI: # TLS SNI(Server Name Indication), Empty for any

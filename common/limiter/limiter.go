@@ -3,7 +3,10 @@ package limiter
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -64,15 +67,26 @@ func (l *Limiter) AddInboundLimiter(tag string, nodeSpeedLimit uint64, userList 
 		// init local store
 		gs := goCacheStore.NewGoCache(goCache.New(time.Duration(globalLimit.Expiry)*time.Second, 1*time.Minute))
 
+		// init redis options
+		redisOptions := &redis.Options{
+			Network:  globalLimit.RedisNetwork,
+			Addr:     globalLimit.RedisAddr,
+			Username: globalLimit.RedisUsername,
+			Password: globalLimit.RedisPassword,
+			DB:       globalLimit.RedisDB,
+		}
+
+		// configure TLS if enabled
+		if globalLimit.EnableTLS {
+			tlsConfig, err := createTLSConfig(globalLimit)
+			if err != nil {
+				return fmt.Errorf("failed to create TLS config: %w", err)
+			}
+			redisOptions.TLSConfig = tlsConfig
+		}
+
 		// init redis store
-		rs := redisStore.NewRedis(redis.NewClient(
-			&redis.Options{
-				Network:  globalLimit.RedisNetwork,
-				Addr:     globalLimit.RedisAddr,
-				Username: globalLimit.RedisUsername,
-				Password: globalLimit.RedisPassword,
-				DB:       globalLimit.RedisDB,
-			}),
+		rs := redisStore.NewRedis(redis.NewClient(redisOptions),
 			store.WithExpiration(time.Duration(globalLimit.Expiry)*time.Second))
 
 		// init chained cache. First use local go-cache, if go-cache is nil, then use redis cache
@@ -288,4 +302,40 @@ func determineRate(nodeLimit, userLimit uint64) (limit uint64) {
 			return nodeLimit
 		}
 	}
+}
+
+// createTLSConfig creates TLS configuration for Redis connection
+func createTLSConfig(config *GlobalDeviceLimitConfig) (*tls.Config, error) {
+	tlsConfig := &tls.Config{
+		InsecureSkipVerify: config.TLSSkipVerify,
+	}
+
+	// Set server name if provided
+	if config.TLSServerName != "" {
+		tlsConfig.ServerName = config.TLSServerName
+	}
+
+	// Load client certificate and key if provided
+	if config.TLSCertFile != "" && config.TLSKeyFile != "" {
+		cert, err := tls.LoadX509KeyPair(config.TLSCertFile, config.TLSKeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load client certificate: %w", err)
+		}
+		tlsConfig.Certificates = []tls.Certificate{cert}
+	}
+
+	// Load CA certificate if provided
+	if config.TLSCAFile != "" {
+		caCert, err := os.ReadFile(config.TLSCAFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read CA certificate: %w", err)
+		}
+		caCertPool := x509.NewCertPool()
+		if !caCertPool.AppendCertsFromPEM(caCert) {
+			return nil, fmt.Errorf("failed to parse CA certificate")
+		}
+		tlsConfig.RootCAs = caCertPool
+	}
+
+	return tlsConfig, nil
 }
