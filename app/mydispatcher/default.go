@@ -182,6 +182,7 @@ func (d *DefaultDispatcher) getLink(ctx context.Context) (*transport.Link, *tran
 		// Disable splice to avoid Vision/REALITY bypassing stats path
 		sessionInbound.CanSpliceCopy = 3
 		user = sessionInbound.User
+		sessionInbound.CanSpliceCopy = 3
 	}
 
 	if user != nil && len(user.Email) > 0 {
