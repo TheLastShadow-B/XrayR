@@ -221,9 +221,13 @@ func (l *Limiter) GetUserBucket(tag string, email string, ip string) (limiter *r
 
 		// Speed limit
 		limit := determineRate(nodeLimit, userLimit) // Determine the speed limit rate
-		errors.LogInfo(context.Background(), fmt.Sprintf("GetUserBucket: email=%s, nodeLimit=%d, userLimit=%d, resultLimit=%d", email, nodeLimit, userLimit, limit))
+		errors.LogDebug(context.Background(), fmt.Sprintf("GetUserBucket check: email=%s, tag=%s, nodeLimit=%d, userLimit=%d, resultLimit=%d", email, tag, nodeLimit, userLimit, limit))
 		if limit > 0 {
-			limiter := rate.NewLimiter(rate.Limit(limit), int(limit)) // Byte/s
+			burst := int(limit)
+			if burst < 768*1024 {
+				burst = 768 * 1024 // Minimum 768KB burst to avoid WaitN failures with standard network buffers
+			}
+			limiter := rate.NewLimiter(rate.Limit(limit), burst) // Byte/s
 			if v, ok := inboundInfo.BucketHub.LoadOrStore(email, limiter); ok {
 				bucket := v.(*rate.Limiter)
 				return bucket, true, false
