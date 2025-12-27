@@ -161,6 +161,27 @@ func (*DefaultDispatcher) Close() error {
 	return nil
 }
 
+// WrapLink implements the method required by mux.Server for connection multiplexing.
+// It applies rate limiting and device limiting before delegating to the embedded dispatcher.
+func (d *DefaultDispatcher) WrapLink(ctx context.Context, link *transport.Link) *transport.Link {
+	sessionInbound := session.InboundFromContext(ctx)
+	var user *protocol.MemoryUser
+	if sessionInbound != nil {
+		user = sessionInbound.User
+	}
+
+	// Apply rate limiting for the user
+	if user != nil && len(user.Email) > 0 {
+		bucket, ok, _ := d.Limiter.GetUserBucket(sessionInbound.Tag, user.Email, sessionInbound.Source.Address.IP().String())
+		if ok {
+			link.Writer = d.Limiter.RateWriter(ctx, link.Writer, bucket)
+		}
+	}
+
+	// Delegate to the embedded official dispatcher's WrapLink for stats handling
+	return d.DefaultDispatcher.WrapLink(ctx, link)
+}
+
 func (d *DefaultDispatcher) getLink(ctx context.Context) (*transport.Link, *transport.Link, error) {
 	opt := pipe.OptionsFromContext(ctx)
 	uplinkReader, uplinkWriter := pipe.New(opt...)
