@@ -16,6 +16,14 @@ func (w *SizeStatWriter) WriteMultiBuffer(mb buf.MultiBuffer) error {
 	return w.Writer.WriteMultiBuffer(mb)
 }
 
+func (w *SizeStatWriter) Write(p []byte) (n int, err error) {
+	w.Counter.Add(int64(len(p)))
+	if iow, ok := w.Writer.(io.Writer); ok {
+		return iow.Write(p)
+	}
+	return len(p), nil
+}
+
 func (w *SizeStatWriter) Close() error {
 	return common.Close(w.Writer)
 }
