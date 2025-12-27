@@ -39,6 +39,7 @@ type CustomConfig struct {
 // UserResponse is the response of user
 type UserResponse struct {
 	ID          int     `json:"id"`
+	Email       string  `json:"email"`
 	Passwd      string  `json:"passwd"`
 	Port        uint32  `json:"port"`
 	Method      string  `json:"method"`
