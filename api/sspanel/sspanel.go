@@ -722,8 +722,13 @@ func (c *APIClient) ParseUserListResponse(userInfoResponse *[]UserResponse) (*[]
 		} else {
 			speedLimit = uint64((user.SpeedLimit * 1000000) / 8)
 		}
+		email := user.Email
+		if email == "" {
+			email = strconv.Itoa(user.ID)
+		}
 		userList = append(userList, api.UserInfo{
 			UID:         user.ID,
+			Email:       email,
 			UUID:        user.UUID,
 			Passwd:      user.Passwd,
 			SpeedLimit:  speedLimit,
