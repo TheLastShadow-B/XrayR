@@ -10,13 +10,15 @@ import (
 )
 
 type Writer struct {
+	ctx     context.Context
 	writer  buf.Writer
 	limiter *rate.Limiter
 	w       io.Writer
 }
 
-func (l *Limiter) RateWriter(writer buf.Writer, limiter *rate.Limiter) buf.Writer {
+func (l *Limiter) RateWriter(ctx context.Context, writer buf.Writer, limiter *rate.Limiter) buf.Writer {
 	w := &Writer{
+		ctx:     ctx,
 		writer:  writer,
 		limiter: limiter,
 	}
@@ -31,14 +33,39 @@ func (w *Writer) Close() error {
 }
 
 func (w *Writer) WriteMultiBuffer(mb buf.MultiBuffer) error {
-	ctx := context.Background()
-	w.limiter.WaitN(ctx, int(mb.Len()))
+	burst := w.limiter.Burst()
+	length := int(mb.Len())
+
+	for length > 0 {
+		n := length
+		if n > burst {
+			n = burst
+		}
+
+		if err := w.limiter.WaitN(w.ctx, n); err != nil {
+			return err
+		}
+		length -= n
+	}
 	return w.writer.WriteMultiBuffer(mb)
 }
 
 func (w *Writer) Write(p []byte) (n int, err error) {
-	ctx := context.Background()
-	w.limiter.WaitN(ctx, len(p))
+	burst := w.limiter.Burst()
+	length := len(p)
+
+	for length > 0 {
+		chunk := length
+		if chunk > burst {
+			chunk = burst
+		}
+
+		if err := w.limiter.WaitN(w.ctx, chunk); err != nil {
+			return 0, err
+		}
+		length -= chunk
+	}
+
 	if w.w != nil {
 		return w.w.Write(p)
 	}
