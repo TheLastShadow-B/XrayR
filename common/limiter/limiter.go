@@ -195,11 +195,13 @@ func (l *Limiter) GetUserBucket(tag string, email string, ip string) (limiter *r
 		// Local device limit
 		ipMap := new(sync.Map)
 		ipMap.Store(ip, uid)
+		isNewIP := false
 		// If any device is online
 		if v, ok := inboundInfo.UserOnlineIP.LoadOrStore(email, ipMap); ok {
 			ipMap := v.(*sync.Map)
 			// If this is a new ip
 			if _, ok := ipMap.LoadOrStore(ip, uid); !ok {
+				isNewIP = true
 				counter := 0
 				ipMap.Range(func(key, value interface{}) bool {
 					counter++
@@ -210,11 +212,21 @@ func (l *Limiter) GetUserBucket(tag string, email string, ip string) (limiter *r
 					return nil, false, true
 				}
 			}
+		} else {
+			// New email entry was created with this IP
+			isNewIP = true
 		}
 
 		// GlobalLimit
 		if inboundInfo.GlobalLimit.config != nil && inboundInfo.GlobalLimit.config.Enable {
 			if reject := globalLimit(inboundInfo, email, uid, ip, deviceLimit); reject {
+				// Clean up local cache to maintain consistency with global state
+				if isNewIP {
+					if v, ok := inboundInfo.UserOnlineIP.Load(email); ok {
+						localIPMap := v.(*sync.Map)
+						localIPMap.Delete(ip)
+					}
+				}
 				return nil, false, true
 			}
 		}
@@ -255,6 +267,10 @@ func globalLimit(inboundInfo *InboundInfo, email string, uid int, ip string, dev
 	v, err := inboundInfo.GlobalLimit.globalOnlineIP.Get(ctx, uniqueKey, new(map[string]int))
 	if err != nil {
 		if _, ok := err.(*store.NotFound); ok {
+			// New user, check if device limit allows at least one device
+			if deviceLimit > 0 && deviceLimit < 1 {
+				return true
+			}
 			// If the email is a new device
 			go pushIP(inboundInfo, uniqueKey, &map[string]int{ip: uid})
 		} else {
@@ -264,15 +280,24 @@ func globalLimit(inboundInfo *InboundInfo, email string, uid int, ip string, dev
 	}
 
 	ipMap := v.(*map[string]int)
-	// Reject device reach limit directly
-	if deviceLimit > 0 && len(*ipMap) > deviceLimit {
-		return true
-	}
 
-	// If the ip is not in cache
-	if _, ok := (*ipMap)[ip]; !ok {
+	// Check if IP already exists in cache
+	_, exists := (*ipMap)[ip]
+
+	// If IP not exists, check if adding it would exceed the limit
+	if !exists {
+		if deviceLimit > 0 && len(*ipMap) >= deviceLimit {
+			return true // Adding would exceed limit, reject
+		}
+		// Add new IP and push to cache
 		(*ipMap)[ip] = uid
 		go pushIP(inboundInfo, uniqueKey, ipMap)
+		return false
+	}
+
+	// IP already exists, check if current count exceeds limit (handle stale data)
+	if deviceLimit > 0 && len(*ipMap) > deviceLimit {
+		return true
 	}
 
 	return false
