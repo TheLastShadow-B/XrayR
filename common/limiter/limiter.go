@@ -269,6 +269,7 @@ func globalLimit(inboundInfo *InboundInfo, email string, uid int, ip string, dev
 		if _, ok := err.(*store.NotFound); ok {
 			// New user, check if device limit allows at least one device
 			if deviceLimit > 0 && deviceLimit < 1 {
+				errors.LogError(context.Background(), "[GlobalDeviceLimit] Reject new user (invalid limit) - UID: %d, Limit: %d, CurrentIP: %s", uid, deviceLimit, ip)
 				return true
 			}
 			// If the email is a new device
@@ -287,6 +288,7 @@ func globalLimit(inboundInfo *InboundInfo, email string, uid int, ip string, dev
 	// If IP not exists, check if adding it would exceed the limit
 	if !exists {
 		if deviceLimit > 0 && len(*ipMap) >= deviceLimit {
+			errors.LogError(context.Background(), "[GlobalDeviceLimit] Reject new IP - UID: %d, Limit: %d, CurrentIP: %s, CachedIPs: %v, CachedCount: %d", uid, deviceLimit, ip, *ipMap, len(*ipMap))
 			return true // Adding would exceed limit, reject
 		}
 		// Add new IP and push to cache
@@ -297,6 +299,7 @@ func globalLimit(inboundInfo *InboundInfo, email string, uid int, ip string, dev
 
 	// IP already exists, check if current count exceeds limit (handle stale data)
 	if deviceLimit > 0 && len(*ipMap) > deviceLimit {
+		errors.LogError(context.Background(), "[GlobalDeviceLimit] Reject existing IP (stale cache) - UID: %d, Limit: %d, CurrentIP: %s, CachedIPs: %v, CachedCount: %d", uid, deviceLimit, ip, *ipMap, len(*ipMap))
 		return true
 	}
 
