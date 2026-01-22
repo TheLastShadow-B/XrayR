@@ -265,12 +265,12 @@ func globalLimit(inboundInfo *InboundInfo, email string, uid int, ip string, dev
 	uniqueKey := strings.Replace(email, inboundInfo.Tag, strconv.Itoa(deviceLimit), 1)
 
 	v, err := inboundInfo.GlobalLimit.globalOnlineIP.Get(ctx, uniqueKey, new(map[string]int))
-	errors.LogDebug(context.Background(), "[GlobalDeviceLimit] Get cache - UID: %d, Limit: %d, IP: %s, Key: %s, Error: %v", uid, deviceLimit, ip, uniqueKey, err)
+	errors.LogDebug(context.Background(), fmt.Sprintf("[GlobalDeviceLimit] Get cache - UID: %d, Limit: %d, IP: %s, Key: %s, Error: %v", uid, deviceLimit, ip, uniqueKey, err))
 	if err != nil {
 		if _, ok := err.(*store.NotFound); ok {
 			// New user, check if device limit allows at least one device
 			if deviceLimit > 0 && deviceLimit < 1 {
-				errors.LogError(context.Background(), "[GlobalDeviceLimit] Reject new user (invalid limit) - UID: %d, Limit: %d, CurrentIP: %s", uid, deviceLimit, ip)
+				errors.LogError(context.Background(), fmt.Sprintf("[GlobalDeviceLimit] Reject new user (invalid limit) - UID: %d, Limit: %d, CurrentIP: %s", uid, deviceLimit, ip))
 				return true
 			}
 			// If the email is a new device
@@ -289,7 +289,7 @@ func globalLimit(inboundInfo *InboundInfo, email string, uid int, ip string, dev
 	// If IP not exists, check if adding it would exceed the limit
 	if !exists {
 		if deviceLimit > 0 && len(*ipMap) >= deviceLimit {
-			errors.LogError(context.Background(), "[GlobalDeviceLimit] Reject new IP - UID: %d, Limit: %d, CurrentIP: %s, CachedIPs: %v, CachedCount: %d", uid, deviceLimit, ip, *ipMap, len(*ipMap))
+			errors.LogError(context.Background(), fmt.Sprintf("[GlobalDeviceLimit] Reject new IP - UID: %d, Limit: %d, CurrentIP: %s, CachedIPs: %v, CachedCount: %d", uid, deviceLimit, ip, *ipMap, len(*ipMap)))
 			return true // Adding would exceed limit, reject
 		}
 		// Add new IP and push to cache
@@ -300,7 +300,7 @@ func globalLimit(inboundInfo *InboundInfo, email string, uid int, ip string, dev
 
 	// IP already exists, check if current count exceeds limit (handle stale data)
 	if deviceLimit > 0 && len(*ipMap) > deviceLimit {
-		errors.LogError(context.Background(), "[GlobalDeviceLimit] Reject existing IP (stale cache) - UID: %d, Limit: %d, CurrentIP: %s, CachedIPs: %v, CachedCount: %d", uid, deviceLimit, ip, *ipMap, len(*ipMap))
+		errors.LogError(context.Background(), fmt.Sprintf("[GlobalDeviceLimit] Reject existing IP (stale cache) - UID: %d, Limit: %d, CurrentIP: %s, CachedIPs: %v, CachedCount: %d", uid, deviceLimit, ip, *ipMap, len(*ipMap)))
 		return true
 	}
 
