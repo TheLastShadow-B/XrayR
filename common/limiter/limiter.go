@@ -265,6 +265,7 @@ func globalLimit(inboundInfo *InboundInfo, email string, uid int, ip string, dev
 	uniqueKey := strings.Replace(email, inboundInfo.Tag, strconv.Itoa(deviceLimit), 1)
 
 	v, err := inboundInfo.GlobalLimit.globalOnlineIP.Get(ctx, uniqueKey, new(map[string]int))
+	errors.LogDebug(context.Background(), "[GlobalDeviceLimit] Get cache - UID: %d, Limit: %d, IP: %s, Key: %s, Error: %v", uid, deviceLimit, ip, uniqueKey, err)
 	if err != nil {
 		if _, ok := err.(*store.NotFound); ok {
 			// New user, check if device limit allows at least one device
