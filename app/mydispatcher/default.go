@@ -331,10 +331,18 @@ func (d *DefaultDispatcher) Dispatch(ctx context.Context, destination net.Destin
 }
 
 // DispatchLink implements routing.Dispatcher.
+//
+// Hysteria 2 (proxy/hysteria) and other non-mux proxies call DispatchLink
+// directly, bypassing the mux.Server → WrapLink path that covers VMess/VLESS.
+// Without explicit wrapping here, per-user rate limiting and per-user
+// traffic counters would never be applied to Hy2 traffic. We apply the same
+// WrapLink transformation up-front so the limited/counted writer reaches
+// routedDispatch regardless of sniffing branch below.
 func (d *DefaultDispatcher) DispatchLink(ctx context.Context, destination net.Destination, outbound *transport.Link) error {
 	if !destination.IsValid() {
 		return newError("Dispatcher: Invalid destination.")
 	}
+	outbound = d.WrapLink(ctx, outbound)
 	outbounds := session.OutboundsFromContext(ctx)
 	if len(outbounds) == 0 {
 		outbounds = []*session.Outbound{{}}
