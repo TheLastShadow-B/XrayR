@@ -39,7 +39,7 @@ type NodeStatus struct {
 type NodeInfo struct {
 	AcceptProxyProtocol bool
 	Authority           string
-	NodeType            string // Must be V2ray, Trojan, and Shadowsocks
+	NodeType            string // Must be V2ray, Trojan, Shadowsocks, or Hysteria2
 	NodeID              int
 	Port                uint32
 	SpeedLimit          uint64 // Bps
@@ -78,6 +78,14 @@ type NodeInfo struct {
 	Security            string
 	Key                 string
 	RejectUnknownSni    bool
+
+	// Hysteria 2 fields (populated only when NodeType == "Hysteria2";
+	// zero/nil for other protocols). Pattern mirrors EnableREALITY + REALITYConfig.
+	UpMbps                uint32
+	DownMbps              uint32
+	Obfs                  string // "" or "salamander"
+	ObfsPassword          string
+	Hy2Masquerade         *Hy2MasqueradeCfg
 }
 
 type UserInfo struct {
@@ -130,4 +138,18 @@ type REALITYConfig struct {
 	MaxClientVer     string
 	MaxTimeDiff      uint64
 	ShortIds         []string
+}
+
+// Hy2MasqueradeCfg is the XrayR-internal representation of Hysteria 2
+// masquerade settings. It uses Go-idiomatic field names; the InboundBuilder
+// maps them to Xray-core's infra/conf.Masquerade (which uses camelCase JSON
+// tags like "rewriteHost"/"statusCode" and the field "Dir" not "File").
+type Hy2MasqueradeCfg struct {
+	Type        string // "url" | "file" | "string"
+	URL         string
+	RewriteHost bool
+	Insecure    bool
+	Dir         string
+	Content     string
+	StatusCode  int32
 }

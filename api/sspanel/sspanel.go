@@ -25,6 +25,14 @@ var (
 	secondPortRe = regexp.MustCompile(`(?m)port=\d+#(\d+)`)          // Second Port
 	hostRe       = regexp.MustCompile(`(?m)host=([\w.]+)\|?`)        // Host
 
+	// obfsPasswordRedactRe scrubs `obfs_password` values from any JSON blob
+	// before it is included in an error string or log entry. Applied in the
+	// error path of GetNodeInfo to prevent Hysteria 2 Salamander obfs
+	// passwords from leaking into operator logs.
+	// Not perfect against escaped quotes in the value, but obfs passwords
+	// in practice are short random strings without embedded quotes.
+	obfsPasswordRedactRe = regexp.MustCompile(`"obfs_password"\s*:\s*"[^"]*"`)
+
 	// allowInsecureDeprecationOnce ensures the deprecation warning for the
 	// `allow_insecure` custom_config field is emitted at most once per process.
 	//
@@ -239,7 +247,8 @@ func (c *APIClient) GetNodeInfo() (nodeInfo *api.NodeInfo, err error) {
 		nodeInfo, err = c.ParseSSPanelNodeInfo(nodeInfoResponse)
 		if err != nil {
 			res, _ := json.Marshal(nodeInfoResponse)
-			return nil, fmt.Errorf("parse node info failed: %s, \nError: %s, \nPlease check the doc of custom_config for help: https://xrayr-project.github.io/XrayR-doc/dui-jie-sspanel/sspanel/sspanel_custom_config", string(res), err)
+			redacted := obfsPasswordRedactRe.ReplaceAll(res, []byte(`"obfs_password":"[REDACTED]"`))
+			return nil, fmt.Errorf("parse node info failed: %s, \nError: %s, \nPlease check the doc of custom_config for help: https://xrayr-project.github.io/XrayR-doc/dui-jie-sspanel/sspanel/sspanel_custom_config", string(redacted), err)
 		}
 	}
 
@@ -800,6 +809,15 @@ func (c *APIClient) ParseSSPanelNodeInfo(nodeInfoResponse *NodeInfoResponse) (*a
 
 	port := uint32(parsedPort)
 
+	// Hysteria 2 extras (populated only when NodeType == "Hysteria2").
+	var (
+		upMbps       uint32
+		downMbps     uint32
+		hy2Obfs      string
+		hy2ObfsPass  string
+		hy2Masq      *api.Hy2MasqueradeCfg
+	)
+
 	switch c.NodeType {
 	case "Shadowsocks":
 		transportProtocol = "tcp"
@@ -821,6 +839,41 @@ func (c *APIClient) ParseSSPanelNodeInfo(nodeInfoResponse *NodeInfoResponse) (*a
 		// Select transport protocol
 		if nodeConfig.Network != "" {
 			transportProtocol = nodeConfig.Network // try to read transport protocol from config
+		}
+	case "Hysteria2":
+		// Hysteria 2 always uses TLS; transport is not an Xray transport.
+		enableTLS = true
+		transportProtocol = ""
+
+		if nodeConfig.Hy2Opts != nil {
+			h := nodeConfig.Hy2Opts
+			upMbps = h.UpMbps
+			downMbps = h.DownMbps
+			hy2Obfs = h.Obfs
+			hy2ObfsPass = h.ObfsPassword
+
+			if hy2Obfs == "salamander" && hy2ObfsPass == "" {
+				return nil, fmt.Errorf("Hysteria2: obfs=%q requires non-empty obfs_password in custom_config.Hy2Opts", hy2Obfs)
+			}
+
+			if h.Masquerade != nil {
+				m := h.Masquerade
+				switch m.Type {
+				case "", "url", "file", "string":
+					// ok (empty Type is normalized below by the inbound builder)
+				default:
+					return nil, fmt.Errorf("Hysteria2: masquerade.type must be one of url|file|string, got %q", m.Type)
+				}
+				hy2Masq = &api.Hy2MasqueradeCfg{
+					Type:        m.Type,
+					URL:         m.URL,
+					RewriteHost: m.RewriteHost,
+					Insecure:    m.Insecure,
+					Dir:         m.Dir,
+					Content:     m.Content,
+					StatusCode:  m.StatusCode,
+				}
+			}
 		}
 	}
 
@@ -859,6 +912,13 @@ func (c *APIClient) ParseSSPanelNodeInfo(nodeInfoResponse *NodeInfoResponse) (*a
 		Header:            nodeConfig.Header,
 		EnableREALITY:     nodeConfig.EnableREALITY,
 		REALITYConfig:     realityConfig,
+
+		// Hy2 fields (zero-valued for non-Hy2 nodes)
+		UpMbps:        upMbps,
+		DownMbps:      downMbps,
+		Obfs:          hy2Obfs,
+		ObfsPassword:  hy2ObfsPass,
+		Hy2Masquerade: hy2Masq,
 	}
 
 	return nodeInfo, nil

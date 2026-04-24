@@ -34,6 +34,31 @@ type CustomConfig struct {
 	Flow           string          `json:"flow"`
 	EnableREALITY  bool            `json:"enable_reality"`
 	RealityOpts    *REALITYConfig  `json:"reality-opts"`
+	// Hy2Opts bundles Hysteria 2-specific knobs; non-nil only for sort=15 nodes.
+	Hy2Opts *Hy2OptsStruct `json:"Hy2Opts,omitempty"`
+}
+
+// Hy2OptsStruct carries Hysteria 2 per-node parameters from the panel.
+// Mirrors the "Hy2Opts" nested bundle in custom_config JSON.
+type Hy2OptsStruct struct {
+	UpMbps       uint32             `json:"up_mbps"`
+	DownMbps     uint32             `json:"down_mbps"`
+	Obfs         string             `json:"obfs"`          // "" or "salamander"
+	ObfsPassword string             `json:"obfs_password"` // required when Obfs != ""
+	Masquerade   *Hy2MasqueradeOpts `json:"masquerade,omitempty"`
+}
+
+// Hy2MasqueradeOpts maps to Xray-core's infra/conf.Masquerade facade.
+// Field names use snake_case on the panel side; the backend maps them to
+// the camelCase names Xray-core expects (rewriteHost, statusCode).
+type Hy2MasqueradeOpts struct {
+	Type        string `json:"type"` // "url" | "file" | "string"
+	URL         string `json:"url"`
+	RewriteHost bool   `json:"rewrite_host"`
+	Insecure    bool   `json:"insecure"`
+	Dir         string `json:"dir"` // file mode directory (Xray-core calls this "dir", not "file")
+	Content     string `json:"content"`
+	StatusCode  int32  `json:"status_code"`
 }
 
 // UserResponse is the response of user
