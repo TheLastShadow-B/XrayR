@@ -841,9 +841,11 @@ func (c *APIClient) ParseSSPanelNodeInfo(nodeInfoResponse *NodeInfoResponse) (*a
 			transportProtocol = nodeConfig.Network // try to read transport protocol from config
 		}
 	case "Hysteria2":
-		// Hysteria 2 always uses TLS; transport is not an Xray transport.
+		// Hysteria 2 always uses TLS. Xray-core registers "hysteria" as the
+		// TransportProtocol name (version discriminates Hy1/Hy2 — we only build
+		// Hy2 in Unit 5's InboundBuilder).
 		enableTLS = true
-		transportProtocol = ""
+		transportProtocol = "hysteria"
 
 		if nodeConfig.Hy2Opts != nil {
 			h := nodeConfig.Hy2Opts

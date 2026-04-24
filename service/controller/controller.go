@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"time"
 
 	log "github.com/sirupsen/logrus"
@@ -80,6 +81,14 @@ func New(server *core.Instance, api api.API, config *Config, panelType string) *
 // Start implement the Start() function of the service interface
 func (c *Controller) Start() error {
 	c.clientInfo = c.apiClient.Describe()
+
+	// R8: warn if the panel API is reached over plaintext HTTP.
+	// Node configs (including Hy2 obfs_password) traverse this channel;
+	// leakage on an untrusted network compromises node-level secrets.
+	if strings.HasPrefix(strings.ToLower(c.clientInfo.APIHost), "http://") {
+		c.logger.Warn("APIHost is plain HTTP; panel API key, node configs, and user secrets travel in clear. Use https:// in production.")
+	}
+
 	// First fetch Node Info
 	newNodeInfo, err := c.apiClient.GetNodeInfo()
 	if err != nil {
@@ -87,6 +96,15 @@ func (c *Controller) Start() error {
 	}
 	if newNodeInfo.Port == 0 {
 		return errors.New("server port must > 0")
+	}
+
+	// R7: Hysteria 2 mandates TLS. Reject startup early (before InboundBuilder)
+	// if CertConfig is missing or explicitly disabled. This avoids the node
+	// silently listening on plaintext UDP.
+	if newNodeInfo.NodeType == "Hysteria2" {
+		if c.config.CertConfig == nil || c.config.CertConfig.CertMode == "" || c.config.CertConfig.CertMode == "none" {
+			return errors.New("Hysteria2 requires TLS: set ControllerConfig.CertConfig.CertMode to file, http, or dns")
+		}
 	}
 	c.nodeInfo = newNodeInfo
 	c.Tag = c.buildNodeTag()
@@ -419,6 +437,12 @@ func (c *Controller) addNewUser(userInfo *[]api.UserInfo, nodeInfo *api.NodeInfo
 		users = c.buildSSUser(userInfo, nodeInfo.CypherMethod)
 	case "Shadowsocks-Plugin":
 		users = c.buildSSPluginUser(userInfo)
+	case "Hysteria2":
+		// R10: Hy2 auth is a single string; colliding passwds would cause
+		// traffic attribution to merge onto the first-registered MemoryAccount.
+		// Filter duplicates here before handing the slice to the builder.
+		deduped := dedupeHy2UsersByPasswd(userInfo, c.logger)
+		users = c.buildHysteria2User(&deduped)
 	default:
 		return fmt.Errorf("unsupported node type: %s", nodeInfo.NodeType)
 	}
@@ -427,8 +451,29 @@ func (c *Controller) addNewUser(userInfo *[]api.UserInfo, nodeInfo *api.NodeInfo
 	if err != nil {
 		return err
 	}
-	c.logger.Printf("Added %d new users", len(*userInfo))
+	c.logger.Printf("Added %d new users", len(users))
 	return nil
+}
+
+// dedupeHy2UsersByPasswd removes duplicate Passwd entries from the user list,
+// keeping the first occurrence. Each skipped duplicate is logged at WARN level.
+// See plan R10 for rationale.
+func dedupeHy2UsersByPasswd(userInfo *[]api.UserInfo, logger *log.Entry) []api.UserInfo {
+	seen := make(map[string]int, len(*userInfo))
+	out := make([]api.UserInfo, 0, len(*userInfo))
+	for _, user := range *userInfo {
+		if user.Passwd == "" {
+			continue
+		}
+		if firstUID, dup := seen[user.Passwd]; dup {
+			logger.Warnf("Hysteria2 duplicate passwd detected: UID %d collides with earlier UID %d; skipping later user",
+				user.UID, firstUID)
+			continue
+		}
+		seen[user.Passwd] = user.UID
+		out = append(out, user)
+	}
+	return out
 }
 
 func compareUserList(old, new *[]api.UserInfo) (deleted, added []api.UserInfo) {

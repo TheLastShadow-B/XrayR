@@ -12,6 +12,7 @@ import (
 	"github.com/xtls/xray-core/common/protocol"
 	"github.com/xtls/xray-core/common/serial"
 	"github.com/xtls/xray-core/infra/conf"
+	hy2_account "github.com/xtls/xray-core/proxy/hysteria/account"
 	"github.com/xtls/xray-core/proxy/shadowsocks"
 	"github.com/xtls/xray-core/proxy/shadowsocks_2022"
 	"github.com/xtls/xray-core/proxy/trojan"
@@ -55,6 +56,32 @@ func (c *Controller) buildVlessUser(userInfo *[]api.UserInfo) (users []*protocol
 			Email:   c.buildUserTag(&user),
 			Account: serial.ToTypedMessage(vlessAccount),
 		}
+	}
+	return users
+}
+
+// buildHysteria2User builds Hysteria 2 users. Auth is user.Passwd (single string).
+// Email follows the shared buildUserTag format so the rate limiter composite key
+// (tag|email|uid) matches what common/limiter.GetUserBucket expects.
+//
+// Note: if two users share the same Passwd (panel-side collision), Xray-core's
+// Validator will register both MemoryAccounts with distinct Emails but match the
+// first-inserted on auth lookup, silently attributing traffic to one user. The
+// controller's addNewUser path filters duplicates upstream of this builder (R10).
+func (c *Controller) buildHysteria2User(userInfo *[]api.UserInfo) (users []*protocol.User) {
+	users = make([]*protocol.User, 0, len(*userInfo))
+	for _, user := range *userInfo {
+		if user.Passwd == "" {
+			errors.LogError(context.Background(), "[UID: %d] Hysteria2 user has empty passwd; skipping", user.UID)
+			continue
+		}
+		users = append(users, &protocol.User{
+			Level: 0,
+			Email: c.buildUserTag(&user),
+			Account: serial.ToTypedMessage(&hy2_account.Account{
+				Auth: user.Passwd,
+			}),
+		})
 	}
 	return users
 }
