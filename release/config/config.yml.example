@@ -28,11 +28,15 @@ Nodes:
       DisableCustomConfig: false # disable custom config for sspanel
     ControllerConfig:
       ListenIP: 0.0.0.0 # IP address you want to listen
-      SendIP: 0.0.0.0 # IP address you want to send pacakage
+      SendIP: 0.0.0.0 # IP address you want to send package
       UpdatePeriodic: 60 # Time to update the nodeinfo, how many sec.
       EnableDNS: false # Use custom DNS config, Please ensure that you set the dns.json well
       DNSType: AsIs # AsIs, UseIP, UseIPv4, UseIPv6, DNS strategy
       EnableProxyProtocol: false # Only works for WebSocket and TCP
+      DisableSniffing: false # Disable destination sniffing; recommend true for QUIC / Hysteria2 nodes
+      DisableIVCheck: false # Disable Shadowsocks IV replay check
+      DisableUploadTraffic: false # Stop reporting traffic stats to panel (debug only)
+      DisableGetRule: false # Stop fetching audit rule list from panel
       AutoSpeedLimitConfig:
         Limit: 0 # Warned speed. Set to 0 to disable AutoSpeedLimit (mbps)
         WarnTimes: 0 # After (WarnTimes) consecutive warnings, the user will be limited. Set to 0 to punish overspeed user immediately.
@@ -100,11 +104,15 @@ Nodes:
 #      RuleListPath: # /etc/XrayR/rulelist Path to local rulelist file
 #    ControllerConfig:
 #      ListenIP: 0.0.0.0 # IP address you want to listen
-#      SendIP: 0.0.0.0 # IP address you want to send pacakage
+#      SendIP: 0.0.0.0 # IP address you want to send package
 #      UpdatePeriodic: 60 # Time to update the nodeinfo, how many sec.
 #      EnableDNS: false # Use custom DNS config, Please ensure that you set the dns.json well
 #      DNSType: AsIs # AsIs, UseIP, UseIPv4, UseIPv6, DNS strategy
 #      EnableProxyProtocol: false # Only works for WebSocket and TCP
+#      DisableSniffing: false # Disable destination sniffing
+#      DisableIVCheck: false # Disable Shadowsocks IV replay check
+#      DisableUploadTraffic: false # Stop reporting traffic stats to panel (debug only)
+#      DisableGetRule: false # Stop fetching audit rule list from panel
 #      AutoSpeedLimitConfig:
 #        Limit: 0 # Warned speed. Set to 0 to disable AutoSpeedLimit (mbps)
 #        WarnTimes: 0 # After (WarnTimes) consecutive warnings, the user will be limited. Set to 0 to punish overspeed user immediately.
@@ -156,3 +164,76 @@ Nodes:
 #        DNSEnv: # DNS ENV option used by DNS provider
 #          ALICLOUD_ACCESS_KEY: aaa
 #          ALICLOUD_SECRET_KEY: bbb
+
+#  # ============================================================
+#  # Hysteria 2 节点示例（QUIC-over-UDP）
+#  # ============================================================
+#  # 部署前 checklist：
+#  #   1. 防火墙/安全组放行该节点端口的 UDP 流量（Hy2 不走 TCP）。
+#  #   2. CertConfig.CertMode 必须是 file / http / dns。
+#  #      设为 none 会被启动时拒绝 —— 见 service/controller/controller.go:104。
+#  #   3. ApiHost 建议走 HTTPS：Hy2 的 panel custom_config 会携带
+#  #      obfs_password 等敏感字段，HTTP 回源会让中间链路看到。
+#  #
+#  # Hy2 专属协议参数 **不在本文件里**，由 panel 侧的 custom_config 注入。
+#  # SSPanel-UIM 节点 custom_config 参考：
+#  #   {
+#  #     "offset_port_node": 443,
+#  #     "offset_port_user": 443,
+#  #     "host": "hy2.example.com",
+#  #     "allow_insecure": false,
+#  #     "up_mbps": 500,
+#  #     "down_mbps": 1000,
+#  #     "obfs": "salamander",
+#  #     "obfs_password": "node_secret",
+#  #     "masquerade": { "type": "url", "url": "https://example.com/",
+#  #                     "rewrite_host": true, "insecure": false }
+#  #   }
+#  # 注意 allow_insecure / allowInsecure 字段上游计划 2026-06-01 硬移除；
+#  # 生产环境把 TLS 证书配对，不要依赖它。
+#  #
+#  # 以下特性对 Hy2 不生效，故此处省略：
+#  #   - EnableFallback / FallBackConfigs（TCP/WS 回落，Hy2 无概念）
+#  #   - EnableREALITY / REALITYConfigs（REALITY 是 TLS-on-TCP 伪装）
+#  # 关于限速：Hy2 的每用户带宽目前走 panel custom_config 的 up_mbps /
+#  # down_mbps（Xray-core BrutalUp/BrutalDown）。XrayR 侧的 WrapLink
+#  # 桥接对 Hy2 是否生效仍在 spike 验证中。下面两段限速/限设备配置
+#  # 会被 controller 正常读入并注入 inbound limiter，但对 Hy2 的实测
+#  # 效果以 spike 结论为准。
+#  # ------------------------------------------------------------
+#  - PanelType: "SSpanel"
+#    ApiConfig:
+#      ApiHost: "https://panel.example.com"   # 见 checklist 第 3 条
+#      ApiKey: "CHANGE_ME"
+#      NodeID: 42
+#      NodeType: Hysteria2                    # 必须精确匹配字符串 Hysteria2
+#      Timeout: 30
+#      SpeedLimit: 0                          # 本地覆盖，0=跟随面板
+#      DeviceLimit: 0
+#    ControllerConfig:
+#      ListenIP: 0.0.0.0
+#      SendIP: 0.0.0.0
+#      UpdatePeriodic: 60
+#      DisableSniffing: true                  # QUIC 内层已加密，sniff 无对象，建议关闭
+#      AutoSpeedLimitConfig:                  # 对 Hy2 的实测效果待 spike 验证（见上方说明）
+#        Limit: 0
+#        WarnTimes: 0
+#        LimitSpeed: 0
+#        LimitDuration: 0
+#      GlobalDeviceLimitConfig:               # 共享 Redis 会话表；Hy2 下效果待 spike 验证
+#        Enable: false
+#        RedisAddr: 127.0.0.1:6379
+#        RedisPassword: YOUR_PASSWORD
+#        RedisDB: 0
+#        Timeout: 5
+#        Expiry: 60
+#      CertConfig:
+#        CertMode: dns                        # 不可为 none；Hy2 要求 TLS
+#        CertDomain: "hy2.example.com"
+#        # CertFile: /etc/XrayR/cert/hy2.example.com.cert   # CertMode=file 时填
+#        # KeyFile:  /etc/XrayR/cert/hy2.example.com.key    # CertMode=file 时填
+#        Provider: cloudflare                 # https://go-acme.github.io/lego/dns/
+#        Email: you@example.com
+#        DNSEnv:
+#          CF_API_EMAIL: you@example.com
+#          CF_API_KEY: your_api_key
