@@ -255,6 +255,15 @@ func InboundBuilder(config *Config, nodeInfo *api.NodeInfo, tag string) (*core.I
 			RejectUnknownSNI: config.CertConfig.RejectUnknownSni,
 		}
 		tlsSettings.Certs = append(tlsSettings.Certs, &conf.TLSCertConfig{CertFile: certFile, KeyFile: keyFile, OcspStapling: 3600})
+		// Hysteria 2 mandates ALPN "h3" in the QUIC handshake. Without this,
+		// xray-core's GetTLSConfig falls back to ["h2","http/1.1"], which has
+		// no overlap with what every Hy2 client offers — the server then
+		// answers the first Initial with a CRYPTO_ERROR / TLS alert 120
+		// (no_application_protocol) and the connection never establishes.
+		if networkType == "hysteria" {
+			alpn := conf.StringList{"h3"}
+			tlsSettings.ALPN = &alpn
+		}
 		streamSetting.TLSSettings = tlsSettings
 	}
 
@@ -278,7 +287,7 @@ func InboundBuilder(config *Config, nodeInfo *api.NodeInfo, tag string) (*core.I
 //     udp_idle_timeout). Up/Down/Congestion/UdpHop fields on this struct are
 //     deprecated — we do not set them.
 //   - StreamConfig.FinalMask.QuicParams: BBR bandwidth (brutalUp/brutalDown)
-//     + congestion algo ("brutal"). The active location for bandwidth.
+//   - congestion algo ("brutal"). The active location for bandwidth.
 //   - StreamConfig.FinalMask.Udp: Salamander obfuscation is registered as a
 //     UDP mask (type: "salamander"), not a direct FinalMask field.
 //
