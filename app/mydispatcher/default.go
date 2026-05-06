@@ -35,7 +35,12 @@ var errSniffingTimeout = newError("timeout on sniffing")
 
 type cachedReader struct {
 	sync.Mutex
-	reader *pipe.Reader
+	// buf.TimeoutReader, not *pipe.Reader — DispatchLink callers (Hysteria 2,
+	// other non-mux proxies) hand us a *buf.TimeoutWrapperReader after
+	// WrapLink, which is not a *pipe.Reader. A concrete-type field would
+	// crash the sniffing goroutine with a type-assertion panic on every
+	// Hy2 request, taking down the whole process.
+	reader buf.TimeoutReader
 	cache  buf.MultiBuffer
 }
 
@@ -89,7 +94,9 @@ func (r *cachedReader) Interrupt() {
 		r.cache = buf.ReleaseMulti(r.cache)
 	}
 	r.Unlock()
-	r.reader.Interrupt()
+	if p, ok := r.reader.(*pipe.Reader); ok {
+		p.Interrupt()
+	}
 }
 
 // DefaultDispatcher is a custom implementation that embeds the official dispatcher
@@ -306,8 +313,13 @@ func (d *DefaultDispatcher) Dispatch(ctx context.Context, destination net.Destin
 		go d.routedDispatch(ctx, outbound, destination)
 	} else {
 		go func() {
+			tr, ok := outbound.Reader.(buf.TimeoutReader)
+			if !ok {
+				d.routedDispatch(ctx, outbound, destination)
+				return
+			}
 			cReader := &cachedReader{
-				reader: outbound.Reader.(*pipe.Reader),
+				reader: tr,
 			}
 			outbound.Reader = cReader
 			result, err := sniffer(ctx, cReader, sniffingRequest.MetadataOnly, destination.Network)
@@ -361,8 +373,17 @@ func (d *DefaultDispatcher) DispatchLink(ctx context.Context, destination net.De
 		go d.routedDispatch(ctx, outbound, destination)
 	} else {
 		go func() {
+			tr, ok := outbound.Reader.(buf.TimeoutReader)
+			if !ok {
+				// No way to peek without a TimeoutReader; skip sniffing
+				// and dispatch directly. Hy2's buf.NewReader output wrapped
+				// by WrapLink does satisfy this, so this branch is only a
+				// safety net for unexpected reader types.
+				d.routedDispatch(ctx, outbound, destination)
+				return
+			}
 			cReader := &cachedReader{
-				reader: outbound.Reader.(*pipe.Reader),
+				reader: tr,
 			}
 			outbound.Reader = cReader
 			result, err := sniffer(ctx, cReader, sniffingRequest.MetadataOnly, destination.Network)
