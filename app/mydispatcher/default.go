@@ -370,38 +370,35 @@ func (d *DefaultDispatcher) DispatchLink(ctx context.Context, destination net.De
 	}
 	sniffingRequest := content.SniffingRequest
 	if !sniffingRequest.Enabled {
-		go d.routedDispatch(ctx, outbound, destination)
+		d.routedDispatch(ctx, outbound, destination)
 	} else {
-		go func() {
-			tr, ok := outbound.Reader.(buf.TimeoutReader)
-			if !ok {
-				// No way to peek without a TimeoutReader; skip sniffing
-				// and dispatch directly. Hy2's buf.NewReader output wrapped
-				// by WrapLink does satisfy this, so this branch is only a
-				// safety net for unexpected reader types.
-				d.routedDispatch(ctx, outbound, destination)
-				return
-			}
-			cReader := &cachedReader{
-				reader: tr,
-			}
-			outbound.Reader = cReader
-			result, err := sniffer(ctx, cReader, sniffingRequest.MetadataOnly, destination.Network)
-			if err == nil {
-				content.Protocol = result.Protocol()
-			}
-			if err == nil && d.shouldOverride(ctx, result, sniffingRequest, destination) {
-				domain := result.Domain()
-				errors.LogInfo(ctx, "sniffed domain: ", domain)
-				destination.Address = net.ParseAddress(domain)
-				if sniffingRequest.RouteOnly && result.Protocol() != "fakedns" {
-					ob.RouteTarget = destination
-				} else {
-					ob.Target = destination
-				}
-			}
+		tr, ok := outbound.Reader.(buf.TimeoutReader)
+		if !ok {
+			// No way to peek without a TimeoutReader; skip sniffing and
+			// dispatch directly. Hy2's buf.NewReader output wrapped by
+			// WrapLink satisfies this, so this branch is a safety net.
 			d.routedDispatch(ctx, outbound, destination)
-		}()
+			return nil
+		}
+		cReader := &cachedReader{
+			reader: tr,
+		}
+		outbound.Reader = cReader
+		result, err := sniffer(ctx, cReader, sniffingRequest.MetadataOnly, destination.Network)
+		if err == nil {
+			content.Protocol = result.Protocol()
+		}
+		if err == nil && d.shouldOverride(ctx, result, sniffingRequest, destination) {
+			domain := result.Domain()
+			errors.LogInfo(ctx, "sniffed domain: ", domain)
+			destination.Address = net.ParseAddress(domain)
+			if sniffingRequest.RouteOnly && result.Protocol() != "fakedns" {
+				ob.RouteTarget = destination
+			} else {
+				ob.Target = destination
+			}
+		}
+		d.routedDispatch(ctx, outbound, destination)
 	}
 
 	return nil
