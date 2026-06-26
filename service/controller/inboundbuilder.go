@@ -320,13 +320,20 @@ func buildHysteria2StreamSettings(streamSetting *conf.StreamConfig, nodeInfo *ap
 	}
 	streamSetting.HysteriaSettings = hyConfig
 
-	// Finalmask: QuicParams (bandwidth) + optional Salamander obfs.
+	// Finalmask: QuicParams (receive windows + bandwidth) + optional Salamander obfs.
 	finalMask := &conf.FinalMask{}
 
+	// QUIC receive windows: override xray-core's defaults (stream 8MiB /
+	// conn 20MiB) with larger values to better fill high-BDP links.
+	quicParams := &conf.QuicParamsConfig{
+		InitStreamReceiveWindow:     26843545,
+		MaxStreamReceiveWindow:      26843545,
+		InitConnectionReceiveWindow: 67108864,
+		MaxConnectionReceiveWindow:  67108864,
+	}
+
 	if nodeInfo.UpMbps > 0 || nodeInfo.DownMbps > 0 {
-		quicParams := &conf.QuicParamsConfig{
-			Congestion: "brutal",
-		}
+		quicParams.Congestion = "brutal"
 		// Bandwidth is parsed from a string like "500 mbps"; the simplest
 		// robust path is to marshal via JSON. See conf.Bandwidth.UnmarshalJSON.
 		if nodeInfo.UpMbps > 0 {
@@ -345,8 +352,8 @@ func buildHysteria2StreamSettings(streamSetting *conf.StreamConfig, nodeInfo *ap
 				return fmt.Errorf("Hysteria2: parse down_mbps=%d: %w", nodeInfo.DownMbps, err)
 			}
 		}
-		finalMask.QuicParams = quicParams
 	}
+	finalMask.QuicParams = quicParams
 
 	if nodeInfo.Obfs == "salamander" && nodeInfo.ObfsPassword != "" {
 		salaRaw := json.RawMessage(fmt.Sprintf(`{"password":%q}`, nodeInfo.ObfsPassword))
