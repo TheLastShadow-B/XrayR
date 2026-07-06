@@ -101,10 +101,10 @@ func (c *Controller) addUsers(users []*protocol.User, tag string) error {
 		// Pre-register per-user traffic counters so core can increment them (downlink/uplink)
 		uName := "user>>>" + mUser.Email + ">>>traffic>>>uplink"
 		dName := "user>>>" + mUser.Email + ">>>traffic>>>downlink"
-		if _, _ = stats.GetOrRegisterCounter(c.stm, uName); true {
+		if _, _ = c.stm.GetOrRegisterCounter(uName); true {
 			// no-op
 		}
-		if _, _ = stats.GetOrRegisterCounter(c.stm, dName); true {
+		if _, _ = c.stm.GetOrRegisterCounter(dName); true {
 			// no-op
 		}
 	}
