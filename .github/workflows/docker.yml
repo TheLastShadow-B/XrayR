@@ -5,7 +5,9 @@ on:
       - published
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: xrayr-project/xrayr
+  # Use the fork's own namespace (must be lowercase): GITHUB_TOKEN cannot
+  # push packages to the upstream xrayr-project org.
+  IMAGE_NAME: thelastshadow-b/xrayr
 
 jobs:
   build:
