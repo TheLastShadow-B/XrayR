@@ -120,7 +120,14 @@ jobs:
       - name: Build XrayR
         run: |
           mkdir -p build_assets
-          go build -v -o build_assets/XrayR -trimpath -ldflags "-s -w -buildid="
+          if [ "$GOOS" = "android" ]; then
+            # wlynxg/anet (via xray-core -> pion) linknames net.zoneCache on
+            # Android, which Go >= 1.23 rejects without -checklinkname=0;
+            # upstream Xray-core builds Android with the same flag.
+            go build -v -o build_assets/XrayR -trimpath -ldflags "-s -w -buildid= -checklinkname=0"
+          else
+            go build -v -o build_assets/XrayR -trimpath -ldflags "-s -w -buildid="
+          fi
 
       - name: Build Mips softfloat XrayR
         if: matrix.goarch == 'mips' || matrix.goarch == 'mipsle'
