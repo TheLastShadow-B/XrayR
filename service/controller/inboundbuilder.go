@@ -216,8 +216,12 @@ func InboundBuilder(config *Config, nodeInfo *api.NodeInfo, tag string) (*core.I
 			streamSetting.Security = "reality"
 
 			r := nodeInfo.REALITYConfig
+			// Show is the only field this branch still takes from local config, and
+			// DisableLocalREALITYConfig means the operator has no reason to declare a
+			// REALITYConfigs block at all — so it is routinely nil here. Everything
+			// else comes from the panel.
 			streamSetting.REALITYSettings = &conf.REALITYConfig{
-				Show:         config.REALITYConfigs.Show,
+				Show:         config.REALITYConfigs != nil && config.REALITYConfigs.Show,
 				Dest:         []byte(`"` + r.Dest + `"`),
 				Xver:         r.ProxyProtocolVer,
 				ServerNames:  r.ServerNames,
