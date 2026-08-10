@@ -268,6 +268,17 @@ func InboundBuilder(config *Config, nodeInfo *api.NodeInfo, tag string) (*core.I
 			alpn := conf.StringList{"h3"}
 			tlsSettings.ALPN = &alpn
 		}
+		// WebSocket and HTTPUpgrade are HTTP/1.1 Upgrade handshakes. Leaving ALPN
+		// at xray-core's ["h2","http/1.1"] default lets any client that offers h2
+		// negotiate it, after which the listener answers the Upgrade request with
+		// an HTTP/2 SETTINGS frame and the transport is dead. Observed against a
+		// live ws node: offering "h2,http/1.1" negotiates h2 and the upgrade
+		// returns binary instead of 101. mihomo happens to send only http/1.1 for
+		// ws, which is why this stays hidden until some other client shows up.
+		if networkType == "websocket" || networkType == "httpupgrade" {
+			alpn := conf.StringList{"http/1.1"}
+			tlsSettings.ALPN = &alpn
+		}
 		streamSetting.TLSSettings = tlsSettings
 	}
 
