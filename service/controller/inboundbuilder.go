@@ -359,13 +359,28 @@ func buildHysteria2StreamSettings(streamSetting *conf.StreamConfig, nodeInfo *ap
 	}
 	finalMask.QuicParams = quicParams
 
-	if nodeInfo.Obfs == "salamander" && nodeInfo.ObfsPassword != "" {
-		salaRaw := json.RawMessage(fmt.Sprintf(`{"password":%q}`, nodeInfo.ObfsPassword))
-		finalMask.Udp = []conf.Mask{
-			{
-				Type:     "salamander",
-				Settings: &salaRaw,
-			},
+	// Both obfuscators live behind xray-core's "salamander" mask: they share a
+	// PSK core, and Salamander.Build() switches to Gecko purely on the presence
+	// of packetSize (infra/conf/transport_finalmask.go). Gecko additionally
+	// re-frames QUIC long-header packets into randomly sized fragments; the
+	// 1-RTT data path is untouched either way.
+	if nodeInfo.ObfsPassword != "" {
+		var settings string
+		switch nodeInfo.Obfs {
+		case "salamander":
+			settings = fmt.Sprintf(`{"password":%q}`, nodeInfo.ObfsPassword)
+		case "gecko":
+			settings = fmt.Sprintf(`{"password":%q,"packetSize":"%d-%d"}`,
+				nodeInfo.ObfsPassword, nodeInfo.ObfsMinPacketSize, nodeInfo.ObfsMaxPacketSize)
+		}
+		if settings != "" {
+			salaRaw := json.RawMessage(settings)
+			finalMask.Udp = []conf.Mask{
+				{
+					Type:     "salamander",
+					Settings: &salaRaw,
+				},
+			}
 		}
 	}
 

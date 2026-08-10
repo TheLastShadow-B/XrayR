@@ -41,11 +41,16 @@ type CustomConfig struct {
 // Hy2OptsStruct carries Hysteria 2 per-node parameters from the panel.
 // Mirrors the "Hy2Opts" nested bundle in custom_config JSON.
 type Hy2OptsStruct struct {
-	UpMbps       uint32             `json:"up_mbps"`
-	DownMbps     uint32             `json:"down_mbps"`
-	Obfs         string             `json:"obfs"`          // "" or "salamander"
-	ObfsPassword string             `json:"obfs_password"` // required when Obfs != ""
-	Masquerade   *Hy2MasqueradeOpts `json:"masquerade,omitempty"`
+	UpMbps       uint32 `json:"up_mbps"`
+	DownMbps     uint32 `json:"down_mbps"`
+	Obfs         string `json:"obfs"`          // "", "salamander", or "gecko"
+	ObfsPassword string `json:"obfs_password"` // required when Obfs != ""
+	// Gecko only. Bounds for the randomly sized fragments Gecko splits QUIC
+	// long-header packets into; omit both to take geckoDefault*PacketSize.
+	// xray-core caps the upper bound at 2048.
+	ObfsMinPacketSize int32              `json:"obfs_min_packet_size"`
+	ObfsMaxPacketSize int32              `json:"obfs_max_packet_size"`
+	Masquerade        *Hy2MasqueradeOpts `json:"masquerade,omitempty"`
 }
 
 // Hy2MasqueradeOpts maps to Xray-core's infra/conf.Masquerade facade.

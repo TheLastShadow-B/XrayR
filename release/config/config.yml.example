@@ -190,13 +190,29 @@ Nodes:
 #  #     "offset_port_user": 443,
 #  #     "host": "hy2.example.com",
 #  #     "allow_insecure": false,
-#  #     "up_mbps": 500,
-#  #     "down_mbps": 1000,
-#  #     "obfs": "salamander",
-#  #     "obfs_password": "node_secret",
-#  #     "masquerade": { "type": "url", "url": "https://example.com/",
-#  #                     "rewrite_host": true, "insecure": false }
+#  #     "Hy2Opts": {
+#  #       "up_mbps": 500,
+#  #       "down_mbps": 1000,
+#  #       "obfs": "salamander",
+#  #       "obfs_password": "node_secret",
+#  #       "masquerade": { "type": "url", "url": "https://example.com/",
+#  #                       "rewrite_host": true, "insecure": false }
+#  #     }
 #  #   }
+#  # Hy2 专属字段必须嵌在 Hy2Opts 里（大小写敏感），平铺在 custom_config
+#  # 顶层不会被解析。
+#  #
+#  # obfs 可选 "salamander" 或 "gecko"（1.0.5 起）。Gecko 额外把 QUIC
+#  # 长头（握手）包切成随机大小的分片，抹掉固定长度的握手指纹；数据面
+#  # 不受影响。两端必须一致，密码相同也不能互通。
+#  #   "Hy2Opts": {
+#  #     "obfs": "gecko",
+#  #     "obfs_password": "node_secret",
+#  #     "obfs_min_packet_size": 600,   # 不填则取默认 600-1300
+#  #     "obfs_max_packet_size": 1300   # 需满足 0 < min <= max <= 2048
+#  #   }
+#  # 上界默认留在 1500 字节 path MTU 以下：超过 MTU 的分片会被 IP 分片
+#  # 或丢弃，而 QUIC 无法补回一个从没收到的 Gecko 分片。
 #  # 注意 allow_insecure / allowInsecure 字段上游计划 2026-06-01 硬移除；
 #  # 生产环境把 TLS 证书配对，不要依赖它。
 #  #

@@ -8,7 +8,7 @@ date: 2026-04-24
 # Hysteria 2 Configuration Guide
 
 Hysteria 2 (Hy2) is a QUIC-based proxy protocol with BBR-style congestion
-control and optional Salamander obfuscation. XrayR provisions Hy2 nodes
+control and optional Salamander or Gecko obfuscation. XrayR provisions Hy2 nodes
 through the SSPanel `custom_config` path; this guide walks through the
 panel-side and XrayR-side wiring and the most common startup errors.
 
@@ -19,6 +19,7 @@ panel-side and XrayR-side wiring and the most common startup errors.
 - **XrayR**: version ≥ 1.0.0 (this repo; Hy2 parsing lands in
   `api/sspanel/sspanel.go` `ParseSSPanelNodeInfo`; inbound in
   `service/controller/inboundbuilder.go` `buildHysteria2StreamSettings`).
+  Gecko obfuscation requires ≥ 1.0.5.
 - **TLS certificate**: Hy2 always runs over TLS. `CertMode: none` is not
   valid for Hy2 and will fail at inbound build time.
 - **UDP reachability**: Hy2 runs over QUIC/UDP. Open the node's UDP port
@@ -76,9 +77,38 @@ does not emit outbound traffic.
 |---|---|---|---|
 | `up_mbps` | uint32 | optional | Server→client bandwidth cap for BBR (Mbps). `0` leaves it unset; XrayR emits `brutalUp` only when > 0. |
 | `down_mbps` | uint32 | optional | Client→server bandwidth cap (Mbps). Same semantics as `up_mbps`. |
-| `obfs` | string | optional | `""` (no obfs) or `"salamander"`. Anything else is rejected. |
-| `obfs_password` | string | **required when `obfs = "salamander"`** | Shared secret between server and all clients for this node. Redacted from XrayR error logs. |
+| `obfs` | string | optional | `""` (no obfs), `"salamander"`, or `"gecko"`. Anything else is rejected by name. |
+| `obfs_password` | string | **required when `obfs` is set** | Shared secret between server and all clients for this node. Redacted from XrayR error logs. |
+| `obfs_min_packet_size` | int32 | optional, **gecko only** | Lower bound of the randomly sized fragments Gecko splits QUIC long-header packets into. Omit together with the max to take the defaults (`600`–`1300`). |
+| `obfs_max_packet_size` | int32 | optional, **gecko only** | Upper bound of the same range. Must satisfy `0 < min <= max <= 2048`; 2048 is xray-core's hard cap. |
 | `masquerade` | object | optional | HTTP/3 decoy response for probing traffic. See next table. |
+
+#### Salamander vs Gecko
+
+Both obfuscators share the same PSK core and both are emitted as xray-core's
+`salamander` UDP mask — xray-core switches to Gecko purely on the presence of
+`packetSize`. Gecko additionally re-frames QUIC long-header (handshake) packets
+into randomly sized fragments, which breaks up the fixed-size handshake
+signature that makes plain Hy2 fingerprintable. The 1-RTT data path is
+untouched either way.
+
+Server and client must agree: a Gecko server will not talk to a Salamander
+client even with an identical password. XrayR therefore never lets a packet
+size reach the Salamander path, since setting one would silently flip the
+inbound to Gecko and strand every existing client.
+
+The default `600`–`1300` range stays well under a 1500-byte path MTU. A
+fragment larger than the path MTU is IP-fragmented or dropped, and QUIC cannot
+recover a Gecko fragment it never sees.
+
+```json
+"Hy2Opts": {
+  "obfs": "gecko",
+  "obfs_password": "strong_random_secret",
+  "obfs_min_packet_size": 600,
+  "obfs_max_packet_size": 1300
+}
+```
 
 #### `masquerade.*` sub-fields
 
@@ -171,7 +201,9 @@ Then from a client (Nekoray / NekoBox / v2rayN with Hy2 support):
 | Log line | Cause | Fix |
 |---|---|---|
 | `unsupported Node type: Hysteria2` | Panel returning legacy mod_mu format. | Upgrade SSPanel to ≥ 2021.11 or stop using `DisableCustomConfig: true`. |
-| `Hysteria2: obfs="salamander" requires non-empty obfs_password in custom_config.Hy2Opts` | Salamander enabled without a password. | Set `Hy2Opts.obfs_password` in the panel. |
+| `Hysteria2: obfs="…" requires non-empty obfs_password in custom_config.Hy2Opts` | Salamander or Gecko enabled without a password. | Set `Hy2Opts.obfs_password` in the panel. |
+| `Hysteria2: unknown obfs "…" in custom_config.Hy2Opts, want "salamander" or "gecko"` | Typo in `obfs`. Before 1.0.5 this fell through in silence and produced an inbound with no obfuscation at all. | Use one of the two literal values, or `""`. |
+| `Hysteria2: obfs=gecko packet size range …-… is invalid; need 0 < min <= max <= 2048` | One bound set without the other, reversed bounds, or above xray-core's cap. | Set both bounds or neither. |
 | `Hysteria2: masquerade.type must be one of url\|file\|string, got "…"` | Typo in `masquerade.type`. | Use one of the three literal values. |
 | `dial tcp …: connect: connection refused` during `Panel Start` | Unrelated to Hy2 — panel itself is unreachable. | Check `ApiHost`, panel service, firewall. |
 | `CertMode: none` inbound build fails | Hy2 requires TLS. | Switch to `file` / `http` / `dns`. |
@@ -195,5 +227,5 @@ Then from a client (Nekoray / NekoBox / v2rayN with Hy2 support):
 - Requirements: `docs/brainstorms/2026-04-24-hysteria2-revised-requirements.md`
 - Parser: `api/sspanel/sspanel.go` (`ParseSSPanelNodeInfo`, case `"Hysteria2"`)
 - Inbound builder: `service/controller/inboundbuilder.go` (`buildHysteria2StreamSettings`)
-- API model: `api/apimodel.go` (`Hy2MasqueradeCfg`, `UpMbps`, `DownMbps`, `Obfs`, `ObfsPassword`)
+- API model: `api/apimodel.go` (`Hy2MasqueradeCfg`, `UpMbps`, `DownMbps`, `Obfs`, `ObfsPassword`, `ObfsMinPacketSize`, `ObfsMaxPacketSize`)
 - Panel response model: `api/sspanel/model.go` (`Hy2OptsStruct`, `Hy2MasqueradeOpts`)

@@ -81,11 +81,15 @@ type NodeInfo struct {
 
 	// Hysteria 2 fields (populated only when NodeType == "Hysteria2";
 	// zero/nil for other protocols). Pattern mirrors EnableREALITY + REALITYConfig.
-	UpMbps                uint32
-	DownMbps              uint32
-	Obfs                  string // "" or "salamander"
-	ObfsPassword          string
-	Hy2Masquerade         *Hy2MasqueradeCfg
+	UpMbps       uint32
+	DownMbps     uint32
+	Obfs         string // "", "salamander", or "gecko"
+	ObfsPassword string
+	// Gecko only; zero for every other obfs. Bounds for the randomly sized
+	// fragments Gecko splits QUIC long-header (handshake) packets into.
+	ObfsMinPacketSize int32
+	ObfsMaxPacketSize int32
+	Hy2Masquerade     *Hy2MasqueradeCfg
 }
 
 type UserInfo struct {

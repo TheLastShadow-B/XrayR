@@ -20,6 +20,18 @@ import (
 	"github.com/XrayR-project/XrayR/api"
 )
 
+const (
+	// Gecko pads each handshake fragment to a random size inside this range.
+	// The default upper bound stays well under a 1500-byte path MTU: a
+	// fragment larger than the path MTU would be IP-fragmented or dropped,
+	// and QUIC has no way to recover a Gecko fragment it never sees.
+	geckoDefaultMinPacketSize int32 = 600
+	geckoDefaultMaxPacketSize int32 = 1300
+
+	// xray-core rejects anything above this (infra/conf/transport_finalmask.go).
+	geckoMaxPacketSizeCap int32 = 2048
+)
+
 var (
 	firstPortRe  = regexp.MustCompile(`(?m)port=(?P<outport>\d+)#?`) // First Port
 	secondPortRe = regexp.MustCompile(`(?m)port=\d+#(\d+)`)          // Second Port
@@ -813,11 +825,13 @@ func (c *APIClient) ParseSSPanelNodeInfo(nodeInfoResponse *NodeInfoResponse) (*a
 
 	// Hysteria 2 extras (populated only when NodeType == "Hysteria2").
 	var (
-		upMbps      uint32
-		downMbps    uint32
-		hy2Obfs     string
-		hy2ObfsPass string
-		hy2Masq     *api.Hy2MasqueradeCfg
+		upMbps        uint32
+		downMbps      uint32
+		hy2Obfs       string
+		hy2ObfsPass   string
+		hy2ObfsMinPkt int32
+		hy2ObfsMaxPkt int32
+		hy2Masq       *api.Hy2MasqueradeCfg
 	)
 
 	switch c.NodeType {
@@ -857,10 +871,37 @@ func (c *APIClient) ParseSSPanelNodeInfo(nodeInfoResponse *NodeInfoResponse) (*a
 			upMbps = h.UpMbps
 			downMbps = h.DownMbps
 			hy2Obfs = h.Obfs
-			hy2ObfsPass = h.ObfsPassword
 
-			if hy2Obfs == "salamander" && hy2ObfsPass == "" {
-				return nil, fmt.Errorf("Hysteria2: obfs=%q requires non-empty obfs_password in custom_config.Hy2Opts", hy2Obfs)
+			// An unrecognised obfs used to fall through in silence, which is the
+			// worst outcome available: the inbound comes up with no obfuscation
+			// while every client is configured to use one, so nothing connects
+			// and nothing is logged. Name the offending value and refuse.
+			switch hy2Obfs {
+			case "":
+			case "salamander", "gecko":
+				hy2ObfsPass = h.ObfsPassword
+				if hy2ObfsPass == "" {
+					return nil, fmt.Errorf("Hysteria2: obfs=%q requires non-empty obfs_password in custom_config.Hy2Opts", hy2Obfs)
+				}
+			default:
+				return nil, fmt.Errorf("Hysteria2: unknown obfs %q in custom_config.Hy2Opts, want \"salamander\" or \"gecko\"", hy2Obfs)
+			}
+
+			// Only Gecko carries a packet size. Letting one reach Salamander
+			// would flip xray-core to the Gecko obfuscator (see
+			// infra/conf/transport_finalmask.go: Salamander.Build picks Gecko as
+			// soon as packetSize is set) and silently break every Salamander
+			// client, so the range is read only on the Gecko path.
+			if hy2Obfs == "gecko" {
+				hy2ObfsMinPkt, hy2ObfsMaxPkt = h.ObfsMinPacketSize, h.ObfsMaxPacketSize
+				if hy2ObfsMinPkt == 0 && hy2ObfsMaxPkt == 0 {
+					hy2ObfsMinPkt, hy2ObfsMaxPkt = geckoDefaultMinPacketSize, geckoDefaultMaxPacketSize
+				}
+				if hy2ObfsMinPkt <= 0 || hy2ObfsMaxPkt < hy2ObfsMinPkt || hy2ObfsMaxPkt > geckoMaxPacketSizeCap {
+					return nil, fmt.Errorf(
+						"Hysteria2: obfs=gecko packet size range %d-%d is invalid; need 0 < min <= max <= %d",
+						hy2ObfsMinPkt, hy2ObfsMaxPkt, geckoMaxPacketSizeCap)
+				}
 			}
 
 			if h.Masquerade != nil {
@@ -921,11 +962,13 @@ func (c *APIClient) ParseSSPanelNodeInfo(nodeInfoResponse *NodeInfoResponse) (*a
 		REALITYConfig:     realityConfig,
 
 		// Hy2 fields (zero-valued for non-Hy2 nodes)
-		UpMbps:        upMbps,
-		DownMbps:      downMbps,
-		Obfs:          hy2Obfs,
-		ObfsPassword:  hy2ObfsPass,
-		Hy2Masquerade: hy2Masq,
+		UpMbps:            upMbps,
+		DownMbps:          downMbps,
+		Obfs:              hy2Obfs,
+		ObfsPassword:      hy2ObfsPass,
+		ObfsMinPacketSize: hy2ObfsMinPkt,
+		ObfsMaxPacketSize: hy2ObfsMaxPkt,
+		Hy2Masquerade:     hy2Masq,
 	}
 
 	return nodeInfo, nil
