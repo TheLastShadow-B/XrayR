@@ -25,6 +25,49 @@ type Config struct {
 	Enabled bool     `json:"enabled"`
 	Hash    string   `json:"config_hash"`
 	Targets []Target `json:"targets"`
+	// Measurement budget. Absent fields fall back to the built-in defaults.
+	Attempts        int `json:"attempts"`
+	TimeoutMS       int `json:"timeout_ms"`
+	IntervalSeconds int `json:"interval_seconds"`
+	// ThresholdMS is the panel's colouring cutoff. Decoded for completeness only:
+	// XrayR measures, the panel judges.
+	ThresholdMS int `json:"threshold_ms"`
+}
+
+const (
+	maxWorkers      = 6
+	attemptGap      = 200 * time.Millisecond
+	apiBudget       = 15 * time.Second
+	defaultAttempts = 3
+	maxAttempts     = 10
+	defaultTimeout  = 3 * time.Second
+	minTimeout      = 200 * time.Millisecond
+	maxTimeout      = 10 * time.Second
+	minInterval     = time.Minute
+	maxInterval     = time.Hour
+)
+
+// Tuning is the normalized measurement budget for one round.
+type Tuning struct {
+	Attempts int
+	Timeout  time.Duration
+	Interval time.Duration // Zero derives the period from the target count.
+}
+
+// Tuning clamps the panel's parameters into a range that can neither stall the node
+// nor truncate a round. A typo in the panel degrades one setting, never the whole probe.
+func (c Config) Tuning() Tuning {
+	tuning := Tuning{Attempts: defaultAttempts, Timeout: defaultTimeout}
+	if c.Attempts > 0 {
+		tuning.Attempts = min(c.Attempts, maxAttempts)
+	}
+	if c.TimeoutMS > 0 {
+		tuning.Timeout = min(max(time.Duration(c.TimeoutMS)*time.Millisecond, minTimeout), maxTimeout)
+	}
+	if c.IntervalSeconds > 0 {
+		tuning.Interval = min(max(time.Duration(c.IntervalSeconds)*time.Second, minInterval), maxInterval)
+	}
+	return tuning
 }
 
 type Sample struct {
@@ -68,10 +111,16 @@ func Validate(config Config) error {
 }
 
 // Interval reserves enough time for every target even when all connections time out.
-// Keep this calculation in sync with SSPanel's TcpProbe::interval.
-func Interval(targetCount int) time.Duration {
-	seconds := ((targetCount+5)/6)*10 + 15
-	minutes := (seconds + 59) / 60
+// The panel's interval_seconds may stretch that period but never shrink it past the
+// reservation. Keep this calculation in sync with SSPanel's TcpProbe::interval.
+func Interval(targetCount int, tuning Tuning) time.Duration {
+	// Round the per-target worst case up to a whole second, matching the panel's arithmetic.
+	perTarget := time.Duration(tuning.Attempts)*tuning.Timeout + time.Duration(tuning.Attempts-1)*attemptGap
+	perTarget = (perTarget + time.Second - 1).Truncate(time.Second)
+	batches := (targetCount + maxWorkers - 1) / maxWorkers
+	period := time.Duration(batches)*perTarget + apiBudget
+	period = max(period, tuning.Interval)
+	minutes := int64((period + time.Minute - 1) / time.Minute)
 	if minutes < 1 {
 		minutes = 1
 	}
@@ -82,6 +131,7 @@ func Measure(ctx context.Context, config Config, dial DialFunc) (Report, error) 
 	if err := Validate(config); err != nil {
 		return Report{}, err
 	}
+	tuning := config.Tuning()
 	ctx, cancelRound := context.WithCancel(ctx)
 	defer cancelRound()
 	report := Report{Hash: config.Hash, MeasuredAt: time.Now().Unix(), Results: make([]Result, len(config.Targets))}
@@ -89,7 +139,7 @@ func Measure(ctx context.Context, config Config, dial DialFunc) (Report, error) 
 	var localError error
 	var mu sync.Mutex
 	jobs := make(chan int)
-	workers := 6
+	workers := maxWorkers
 	if len(config.Targets) < workers {
 		workers = len(config.Targets)
 	}
@@ -102,10 +152,10 @@ func Measure(ctx context.Context, config Config, dial DialFunc) (Report, error) 
 					return
 				}
 				target := config.Targets[i]
-				result := Result{TargetID: target.ID, Samples: make([]Sample, 0, 3)}
-				for attempt := 0; attempt < 3; attempt++ {
+				result := Result{TargetID: target.ID, Samples: make([]Sample, 0, tuning.Attempts)}
+				for attempt := 0; attempt < tuning.Attempts; attempt++ {
 					if attempt > 0 {
-						timer := time.NewTimer(200 * time.Millisecond)
+						timer := time.NewTimer(attemptGap)
 						select {
 						case <-timer.C:
 						case <-ctx.Done():
@@ -113,7 +163,7 @@ func Measure(ctx context.Context, config Config, dial DialFunc) (Report, error) 
 							return
 						}
 					}
-					attemptCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+					attemptCtx, cancel := context.WithTimeout(ctx, tuning.Timeout)
 					start := time.Now()
 					conn, err := dial(attemptCtx, "tcp4", net.JoinHostPort(target.IP, strconv.Itoa(target.Port)))
 					elapsed := float64(time.Since(start).Microseconds()) / 1000
@@ -180,13 +230,14 @@ func runOnce(ctx context.Context, client Client, sourceIP string) (time.Duration
 	configCtx, cancelConfig := context.WithTimeout(ctx, 10*time.Second)
 	config, err := client.GetTCPProbeConfig(configCtx)
 	cancelConfig()
-	interval := Interval(len(config.Targets))
+	tuning := config.Tuning()
+	interval := Interval(len(config.Targets), tuning)
 	if err != nil || !config.Enabled || len(config.Targets) == 0 {
 		return time.Minute, err
 	}
-	roundCtx, cancel := context.WithTimeout(ctx, interval-15*time.Second)
+	roundCtx, cancel := context.WithTimeout(ctx, interval-apiBudget)
 	defer cancel()
-	dialer := &net.Dialer{Timeout: 3 * time.Second}
+	dialer := &net.Dialer{Timeout: tuning.Timeout}
 	if sourceIP != "" && sourceIP != "0.0.0.0" && sourceIP != "::" {
 		ip := net.ParseIP(sourceIP)
 		if ip == nil || ip.To4() == nil {

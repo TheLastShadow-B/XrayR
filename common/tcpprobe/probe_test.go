@@ -2,6 +2,7 @@ package tcpprobe
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"strings"
@@ -143,11 +144,80 @@ func TestMeasureDynamicTargetsCancelsQueuedWorkOnLocalFailure(t *testing.T) {
 
 func TestTCPProbeAdaptiveInterval(t *testing.T) {
 	for count, want := range map[int]time.Duration{0: time.Minute, 9: time.Minute, 24: time.Minute, 25: 2 * time.Minute, 32: 2 * time.Minute, 60: 2 * time.Minute, 61: 3 * time.Minute, 1000: 29 * time.Minute} {
-		if got := Interval(count); got != want {
+		if got := Interval(count, Config{}.Tuning()); got != want {
 			t.Errorf("%d targets: got %s want %s", count, got, want)
 		}
-		if Interval(count)-15*time.Second < time.Duration((count+5)/6)*9400*time.Millisecond {
+		if Interval(count, Config{}.Tuning())-15*time.Second < time.Duration((count+5)/6)*9400*time.Millisecond {
 			t.Fatal("insufficient timeout budget")
 		}
+	}
+}
+
+func TestTuningFallsBackWhenPanelOmitsFields(t *testing.T) {
+	// Panels predating these fields send nothing; zero values must not disable measurement.
+	if got := (Config{}).Tuning(); got != (Tuning{Attempts: 3, Timeout: 3 * time.Second}) {
+		t.Fatalf("older panels lost the built-in defaults: %+v", got)
+	}
+}
+
+func TestTuningClampsOutOfRangePanelValues(t *testing.T) {
+	for _, tc := range []struct {
+		config Config
+		want   Tuning
+	}{
+		{Config{Attempts: 99, TimeoutMS: 99999, IntervalSeconds: 99999}, Tuning{Attempts: 10, Timeout: 10 * time.Second, Interval: time.Hour}},
+		{Config{Attempts: -1, TimeoutMS: 1, IntervalSeconds: 1}, Tuning{Attempts: 3, Timeout: 200 * time.Millisecond, Interval: time.Minute}},
+	} {
+		if got := tc.config.Tuning(); got != tc.want {
+			t.Errorf("%+v: got %+v want %+v", tc.config, got, tc.want)
+		}
+	}
+}
+
+func TestMeasureHonorsPanelAttemptsAndTimeout(t *testing.T) {
+	config := fixture()
+	config.Attempts, config.TimeoutMS = 5, 1000
+	var calls atomic.Int32
+	report, err := Measure(context.Background(), config, func(ctx context.Context, _, _ string) (net.Conn, error) {
+		calls.Add(1)
+		if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) > time.Second {
+			t.Error("attempt deadline ignores panel timeout_ms")
+		}
+		return nil, syscall.ECONNREFUSED
+	})
+	if err != nil || calls.Load() != 5 || len(report.Results[0].Samples) != 5 {
+		t.Fatalf("panel attempts ignored: calls=%d samples=%+v err=%v", calls.Load(), report.Results, err)
+	}
+}
+
+func TestIntervalHonorsPanelValueButNeverBreaksSafetyFloor(t *testing.T) {
+	// The panel may stretch the period.
+	if got := Interval(9, Config{IntervalSeconds: 300}.Tuning()); got != 5*time.Minute {
+		t.Errorf("panel interval ignored: got %s want 5m", got)
+	}
+	// It may not shrink it below the time a full round actually needs.
+	if got := Interval(60, Config{IntervalSeconds: 60}.Tuning()); got != 2*time.Minute {
+		t.Errorf("panel interval broke the safety floor: got %s want 2m", got)
+	}
+	// A longer per-attempt timeout widens that floor.
+	if got := Interval(9, Config{Attempts: 5, TimeoutMS: 9000}.Tuning()); got != 2*time.Minute {
+		t.Errorf("floor ignores panel timeout: got %s want 2m", got)
+	}
+}
+
+func TestConfigDecodesPanelTuningFields(t *testing.T) {
+	payload := `{"enabled":true,"threshold_ms":250,"interval_seconds":120,"timeout_ms":1500,"attempts":5,` +
+		`"targets":[{"id":1,"carrier":"telecom","label":"BJ","ip":"219.141.150.166","port":65499}],` +
+		`"config_hash":"` + strings.Repeat("a", 64) + `"}`
+	var config Config
+	if err := json.Unmarshal([]byte(payload), &config); err != nil {
+		t.Fatal(err)
+	}
+	// threshold_ms is the panel's colouring cutoff: decoded, never consumed here.
+	if config.ThresholdMS != 250 {
+		t.Error("threshold_ms did not decode")
+	}
+	if got := config.Tuning(); got != (Tuning{Attempts: 5, Timeout: 1500 * time.Millisecond, Interval: 2 * time.Minute}) {
+		t.Fatalf("panel tuning not applied: %+v", got)
 	}
 }
