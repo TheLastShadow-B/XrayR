@@ -98,3 +98,56 @@ func TestDisabledConfigDoesNotMeasureOrReport(t *testing.T) {
 		t.Fatal("disabled probe reported")
 	}
 }
+
+func TestMeasureDynamicTargetsKeepsAllIDsAndBoundsConcurrency(t *testing.T) {
+	config := fixture()
+	config.Targets = nil
+	for i := 0; i < 32; i++ {
+		config.Targets = append(config.Targets, Target{ID: 100 + i, IP: "1.1.1.1", Port: 443})
+	}
+	var active, maximum, calls atomic.Int32
+	report, err := Measure(context.Background(), config, func(ctx context.Context, network, address string) (net.Conn, error) {
+		n := active.Add(1)
+		defer active.Add(-1)
+		for previous := maximum.Load(); n > previous; previous = maximum.Load() {
+			if maximum.CompareAndSwap(previous, n) {
+				break
+			}
+		}
+		calls.Add(1)
+		time.Sleep(time.Millisecond)
+		return nil, syscall.ECONNREFUSED
+	})
+	if err != nil || len(report.Results) != 32 || calls.Load() != 96 || maximum.Load() > 6 {
+		t.Fatalf("incomplete or unbounded round: results=%d calls=%d concurrency=%d err=%v", len(report.Results), calls.Load(), maximum.Load(), err)
+	}
+	for i, result := range report.Results {
+		if result.TargetID != 100+i || len(result.Samples) != 3 {
+			t.Fatal("target lost or ID changed")
+		}
+	}
+}
+
+func TestMeasureDynamicTargetsCancelsQueuedWorkOnLocalFailure(t *testing.T) {
+	config := fixture()
+	for i := 2; i <= 40; i++ {
+		config.Targets = append(config.Targets, Target{ID: i, IP: "1.1.1.1", Port: 443})
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_, err := Measure(ctx, config, func(context.Context, string, string) (net.Conn, error) { return nil, syscall.EMFILE })
+	if err == nil || ctx.Err() != nil {
+		t.Fatalf("local failure blocked dispatch: %v", err)
+	}
+}
+
+func TestTCPProbeAdaptiveInterval(t *testing.T) {
+	for count, want := range map[int]time.Duration{0: time.Minute, 9: time.Minute, 24: time.Minute, 25: 2 * time.Minute, 32: 2 * time.Minute, 60: 2 * time.Minute, 61: 3 * time.Minute, 1000: 29 * time.Minute} {
+		if got := Interval(count); got != want {
+			t.Errorf("%d targets: got %s want %s", count, got, want)
+		}
+		if Interval(count)-15*time.Second < time.Duration((count+5)/6)*9400*time.Millisecond {
+			t.Fatal("insufficient timeout budget")
+		}
+	}
+}
