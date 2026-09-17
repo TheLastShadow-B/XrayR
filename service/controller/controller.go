@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"reflect"
@@ -20,6 +21,7 @@ import (
 	"github.com/XrayR-project/XrayR/app/mydispatcher"
 	"github.com/XrayR-project/XrayR/common/mylego"
 	"github.com/XrayR-project/XrayR/common/serverstatus"
+	"github.com/XrayR-project/XrayR/common/tcpprobe"
 )
 
 type LimitInfo struct {
@@ -29,24 +31,26 @@ type LimitInfo struct {
 }
 
 type Controller struct {
-	server       *core.Instance
-	config       *Config
-	clientInfo   api.ClientInfo
-	apiClient    api.API
-	nodeInfo     *api.NodeInfo
-	Tag          string
-	userList     *[]api.UserInfo
-	tasks        []periodicTask
-	limitedUsers map[api.UserInfo]LimitInfo
-	warnedUsers  map[api.UserInfo]int
-	panelType    string
-	ibm          inbound.Manager
-	obm          outbound.Manager
-	stm          stats.Manager
-	pm           policy.Manager
-	dispatcher   *mydispatcher.DefaultDispatcher
-	startAt      time.Time
-	logger       *log.Entry
+	server         *core.Instance
+	config         *Config
+	clientInfo     api.ClientInfo
+	apiClient      api.API
+	nodeInfo       *api.NodeInfo
+	Tag            string
+	userList       *[]api.UserInfo
+	tasks          []periodicTask
+	limitedUsers   map[api.UserInfo]LimitInfo
+	warnedUsers    map[api.UserInfo]int
+	panelType      string
+	ibm            inbound.Manager
+	obm            outbound.Manager
+	stm            stats.Manager
+	pm             policy.Manager
+	dispatcher     *mydispatcher.DefaultDispatcher
+	startAt        time.Time
+	logger         *log.Entry
+	tcpProbeCancel context.CancelFunc
+	tcpProbeDone   chan struct{}
 }
 
 type periodicTask struct {
@@ -181,6 +185,15 @@ func (c *Controller) Start() error {
 	}
 
 	// Start periodic tasks
+	if client, ok := c.apiClient.(tcpprobe.Client); ok {
+		ctx, cancel := context.WithCancel(context.Background())
+		c.tcpProbeCancel = cancel
+		c.tcpProbeDone = make(chan struct{})
+		go func() {
+			defer close(c.tcpProbeDone)
+			tcpprobe.Run(ctx, client, c.config.SendIP, c.clientInfo.NodeID, func(err error) { c.logger.Warn(err) })
+		}()
+	}
 	for i := range c.tasks {
 		c.logger.Printf("Start %s periodic task", c.tasks[i].tag)
 		go c.tasks[i].Start()
@@ -191,6 +204,10 @@ func (c *Controller) Start() error {
 
 // Close implement the Close() function of the service interface
 func (c *Controller) Close() error {
+	if c.tcpProbeCancel != nil {
+		c.tcpProbeCancel()
+		<-c.tcpProbeDone
+	}
 	for i := range c.tasks {
 		if c.tasks[i].Periodic != nil {
 			if err := c.tasks[i].Periodic.Close(); err != nil {
