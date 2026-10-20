@@ -37,6 +37,7 @@ Nodes:
       EnableDNS: false # Use custom DNS config, Please ensure that you set the dns.json well
       DNSType: AsIs # AsIs, UseIP, UseIPv4, UseIPv6, DNS strategy
       EnableProxyProtocol: false # Only works for WebSocket and TCP
+      TrustedXForwardedFor: [] # Behind a reverse proxy (WS/HTTPUpgrade/XHTTP/gRPC): trust X-Forwarded-For when one of these headers is present, e.g. ["X-Real-IP"]
       DisableSniffing: false # Disable destination sniffing; recommend true for QUIC / Hysteria2 nodes
       DisableIVCheck: false # Disable Shadowsocks IV replay check
       DisableUploadTraffic: false # Stop reporting traffic stats to panel (debug only)

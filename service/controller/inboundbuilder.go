@@ -289,6 +289,14 @@ func InboundBuilder(config *Config, nodeInfo *api.NodeInfo, tag string) (*core.I
 		}
 		streamSetting.SocketSettings = sockoptConfig
 	}
+	// HTTP-based transports behind a reverse proxy see only the proxy's address:
+	// xray-core v26.7+ ignores X-Forwarded-For unless a header named here is present.
+	if len(config.TrustedXForwardedFor) > 0 {
+		if streamSetting.SocketSettings == nil {
+			streamSetting.SocketSettings = &conf.SocketConfig{}
+		}
+		streamSetting.SocketSettings.TrustedXForwardedFor = config.TrustedXForwardedFor
+	}
 	inboundDetourConfig.StreamSetting = streamSetting
 
 	return inboundDetourConfig.Build()

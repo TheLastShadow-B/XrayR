@@ -1,7 +1,10 @@
 package controller_test
 
 import (
+	"slices"
 	"testing"
+
+	"github.com/xtls/xray-core/app/proxyman"
 
 	"github.com/XrayR-project/XrayR/api"
 	"github.com/XrayR-project/XrayR/common/mylego"
@@ -130,5 +133,47 @@ func TestBuildPanelDrivenREALITYWithoutLocalConfigs(t *testing.T) {
 
 	if _, err := InboundBuilder(config, nodeInfo, "test_tag"); err != nil {
 		t.Error(err)
+	}
+}
+
+// Node 34 (Trojan WS behind a local openresty) reported every user as 127.0.0.1:
+// xray-core v26.7+ ignores X-Forwarded-For unless sockopt.trustedXForwardedFor
+// names a header the proxy sets, and the panel's device limit counted 127.0.0.1
+// as an extra device for everyone.
+func TestBuildWSTrustedXForwardedFor(t *testing.T) {
+	nodeInfo := &api.NodeInfo{
+		NodeType:          "Trojan",
+		NodeID:            34,
+		Port:              40200,
+		TransportProtocol: "ws",
+		Host:              "cloud-jp.node.example.com",
+		Path:              "/ws",
+	}
+
+	for _, tc := range []struct {
+		name    string
+		trusted []string
+	}{
+		{"configured", []string{"X-Real-IP"}},
+		{"not configured", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			config := &Config{
+				CertConfig:           &mylego.CertConfig{CertMode: "none"},
+				TrustedXForwardedFor: tc.trusted,
+			}
+			inbound, err := InboundBuilder(config, nodeInfo, "test_tag")
+			if err != nil {
+				t.Fatal(err)
+			}
+			receiver, err := inbound.ReceiverSettings.GetInstance()
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := receiver.(*proxyman.ReceiverConfig).StreamSettings.GetSocketSettings().GetTrustedXForwardedFor()
+			if !slices.Equal(got, tc.trusted) {
+				t.Errorf("trustedXForwardedFor: got %q want %q", got, tc.trusted)
+			}
+		})
 	}
 }
